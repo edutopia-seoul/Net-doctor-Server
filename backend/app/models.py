@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON as SQLJSON, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, JSON as SQLJSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,25 @@ class Measurement(Base):
     agent: Mapped[Agent] = relationship(back_populates="measurements")
     rule_diagnosis: Mapped["RuleDiagnosis | None"] = relationship(back_populates="measurement", uselist=False)
     ai_diagnosis: Mapped["AIDiagnosis | None"] = relationship(back_populates="measurement", uselist=False)
+    health_scores: Mapped[list["HealthScore"]] = relationship(back_populates="measurement", lazy="selectin")
+
+
+class HealthScore(Base):
+    __tablename__ = "health_scores"
+    __table_args__ = (
+        UniqueConstraint("measurement_id", "score_version", name="uq_health_measurement_version"),
+        CheckConstraint("overall_score IS NULL OR (overall_score >= 0 AND overall_score <= 100)", name="ck_health_score_range"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    measurement_id: Mapped[int] = mapped_column(ForeignKey("measurements.id"), index=True)
+    score_version: Mapped[str] = mapped_column(String(64))
+    config_hash: Mapped[str] = mapped_column(String(64))
+    config_snapshot: Mapped[dict] = mapped_column(JSON)
+    overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    overall_severity: Mapped[str] = mapped_column(String(16))
+    result: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    measurement: Mapped[Measurement] = relationship(back_populates="health_scores")
 
 
 class RuleDiagnosis(Base):

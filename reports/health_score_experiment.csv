@@ -1,0 +1,21 @@
+﻿measurement_id,condition,overall,local,internet,dns,tcp,http,top_deduction,overall_coverage,score_version,config_hash
+21,NORMAL,100.0,100.0,100.0,100.0,100.0,100.0,none,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+22,NORMAL,100.0,100.0,100.0,100.0,100.0,100.0,none,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+23,NORMAL,100.0,100.0,100.0,100.0,100.0,100.0,none,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+24,NORMAL,100.0,100.0,100.0,100.0,100.0,100.0,none,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+25,NORMAL,100.0,100.0,100.0,100.0,100.0,100.0,none,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+26,HIGH_LATENCY,72.5,50.0,50.0,100.0,100.0,75.0,internet: internet_ping.avg_rtt_ms=202.9ms -50,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+27,HIGH_LATENCY,77.5,50.0,50.0,100.0,100.0,100.0,internet: internet_ping.avg_rtt_ms=203.5ms -50,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+28,HIGH_LATENCY,72.5,50.0,50.0,100.0,100.0,75.0,internet: internet_ping.avg_rtt_ms=203.5ms -50,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+29,HIGH_LATENCY,72.5,50.0,50.0,100.0,100.0,75.0,internet: internet_ping.avg_rtt_ms=203ms -50,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+30,HIGH_LATENCY,72.5,50.0,50.0,100.0,100.0,75.0,internet: internet_ping.avg_rtt_ms=202.7ms -50,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+31,PACKET_LOSS,69.75,40.0,55.0,100.0,65.0,100.0,local: gateway_ping.packet_loss_pct=20% -60,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+32,PACKET_LOSS,73.0,40.0,40.0,100.0,100.0,100.0,internet: internet_ping.packet_loss_pct=20% -60,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+33,PACKET_LOSS,78.75,100.0,55.0,100.0,90.0,60.0,internet: internet_ping.packet_loss_pct=10% -45,0.9,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+34,PACKET_LOSS,81.75,100.0,55.0,100.0,65.0,100.0,internet: internet_ping.packet_loss_pct=10% -45,0.9,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+35,PACKET_LOSS,98.0,100.0,100.0,100.0,90.0,100.0,tcp: tcp.retransmission_pct=3.125% -10,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+36,MIXED,71.75,15.0,55.0,100.0,100.0,100.0,internet: internet_ping.packet_loss_pct=10% -45,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+37,MIXED,76.0,15.0,100.0,100.0,90.0,75.0,local: gateway_ping.packet_loss_pct=10% -45,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+38,MIXED,83.0,15.0,100.0,100.0,100.0,100.0,local: gateway_ping.packet_loss_pct=10% -45,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+39,MIXED,68.0,60.0,40.0,100.0,80.0,75.0,internet: internet_ping.packet_loss_pct=20% -60,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18
+40,MIXED,80.75,60.0,55.0,100.0,100.0,100.0,internet: internet_ping.packet_loss_pct=10% -45,0.95,health-score-v1,c64ff81ece540b6c0e8433f979e9422c13a40e2260793a62bc995368ab10df18

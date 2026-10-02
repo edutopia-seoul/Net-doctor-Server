@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { curveMonotoneX } from '@visx/curve';
 import { AreaChart, Area } from '@/components/charts/area-chart';
 import { LineChart, Line } from '@/components/charts/line-chart';
 import { Grid } from '@/components/charts/grid';
@@ -23,7 +24,7 @@ export default function TimeSeriesPanel({ title, description, measurements, metr
         <Grid horizontal />
         {area
           ? <Area dataKey="value" fill="var(--series-color)" stroke="var(--series-color)" fillOpacity={0.2} animate={false} />
-          : <Line dataKey="value" stroke="var(--series-color)" animate={false} fadeEdges={false} showMarkers={points.length < 12} />}
+          : <Line dataKey="value" curve={curveMonotoneX} stroke="var(--series-color)" animate={false} fadeEdges={false} showMarkers={points.length < 12} />}
         <XAxis numTicks={4} />
         <YAxis numTicks={4} formatValue={value => Number(value.toFixed(1)).toString()} />
         <ChartTooltip showDatePill={false} content={({ point }) =>

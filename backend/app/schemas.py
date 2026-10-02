@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -139,6 +139,58 @@ class AgentOut(BaseModel):
     metadata: dict
 
 
+class ScoreDeduction(BaseModel):
+    code: str
+    metric: str
+    value: float
+    unit: str
+    threshold: float
+    operator: Literal["gt", "ge"]
+    points: int = Field(ge=0, le=100)
+    assessed_points: int = Field(ge=0, le=100)
+    reason: str
+    group: str
+
+
+class CategoryScore(BaseModel):
+    score: float | None = Field(default=None, ge=0, le=100)
+    severity: Literal["normal", "warning", "critical", "unknown"]
+    available: bool
+    coverage: float = Field(ge=0, le=1)
+    quality: Literal["complete", "partial", "unavailable"]
+    low_sample: bool = False
+    evidence: dict[str, float] = Field(default_factory=dict)
+    missing_metrics: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    deductions: list[ScoreDeduction] = Field(default_factory=list)
+
+
+class OverallScore(BaseModel):
+    score: float | None = Field(default=None, ge=0, le=100)
+    severity: Literal["normal", "warning", "critical", "unknown"]
+    available: bool
+    coverage: float = Field(ge=0, le=1)
+    included_weight: float = Field(ge=0, le=1)
+    quality: Literal["complete", "partial", "unavailable"]
+    notes: list[str] = Field(default_factory=list)
+
+
+class ScoreCause(ScoreDeduction):
+    category: str
+    weighted_points: float = Field(ge=0, le=100)
+
+
+class HealthScoreOut(BaseModel):
+    measurement_id: int | None = None
+    score_version: str
+    config_hash: str
+    weights: dict[str, float]
+    overall: OverallScore
+    categories: dict[str, CategoryScore]
+    top_causes: list[ScoreCause] = Field(default_factory=list)
+    created_at: datetime | None = None
+
+
 class MeasurementOut(BaseModel):
     id: int
     agent_id: str
@@ -148,6 +200,7 @@ class MeasurementOut(BaseModel):
     metrics: dict
     collector_status: list
     created_at: datetime
+    health_score: HealthScoreOut | None = None
 
 
 class DiagnosisOut(BaseModel):

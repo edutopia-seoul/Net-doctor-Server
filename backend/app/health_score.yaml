@@ -1,0 +1,109 @@
+score_version: health-score-v1
+weights:
+  local: 0.20
+  internet: 0.25
+  dns: 0.15
+  tcp: 0.20
+  http: 0.20
+severity:
+  normal_min: 80
+  warning_min: 60
+minimum_available_weight: 0.50
+tcp_min_packets: 50
+categories:
+  local:
+    collectors: [gateway_ping, ping]
+    metrics:
+      gateway_ping.avg_rtt_ms:
+        code: GATEWAY_HIGH_RTT
+        unit: ms
+        operator: gt
+        bands: [{threshold: 20, points: 25}, {threshold: 100, points: 40}, {threshold: 200, points: 50}, {threshold: 500, points: 65}]
+      gateway_ping.packet_loss_pct:
+        code: GATEWAY_PACKET_LOSS
+        unit: '%'
+        maximum: 100
+        bands: &loss_bands [{threshold: 3, points: 25}, {threshold: 5, points: 35}, {threshold: 10, points: 45}, {threshold: 20, points: 60}, {threshold: 50, points: 75}, {threshold: 100, points: 100}]
+  internet:
+    collectors: [internet_ping, ping]
+    metrics:
+      internet_ping.avg_rtt_ms:
+        code: INTERNET_HIGH_RTT
+        unit: ms
+        operator: gt
+        bands: [{threshold: 150, points: 30}, {threshold: 200, points: 50}, {threshold: 500, points: 65}]
+      internet_ping.packet_loss_pct:
+        code: INTERNET_PACKET_LOSS
+        unit: '%'
+        maximum: 100
+        bands: *loss_bands
+  dns:
+    collectors: [dns]
+    metrics:
+      dns.system_ms: &dns_policy
+        code: DNS_SLOW_RESPONSE
+        unit: ms
+        group: resolver_latency
+        operator: gt
+        bands: [{threshold: 300, points: 25}, {threshold: 600, points: 40}, {threshold: 1500, points: 60}]
+      dns.google_ms: *dns_policy
+      dns.cloudflare_ms: *dns_policy
+  tcp:
+    collectors: [tshark, tcp]
+    metrics:
+      tcp.retransmission_pct:
+        code: TCP_RETRANSMISSION
+        unit: '%'
+        maximum: 100
+        group: transmission
+        bands: [{threshold: 1, points: 10}, {threshold: 5, points: 25}, {threshold: 10, points: 40}, {threshold: 20, points: 60}, {threshold: 50, points: 80}, {threshold: 100, points: 100}]
+      tcp.duplicate_ack:
+        code: TCP_DUPLICATE_ACK
+        unit: packets
+        integer: true
+        group: transmission
+        bands: [{threshold: 3, points: 10}, {threshold: 10, points: 25}]
+      tcp.rst:
+        code: TCP_RST_OBSERVED
+        unit: packets
+        integer: true
+        bands: [{threshold: 1, points: 10}, {threshold: 5, points: 25}]
+      tcp.zero_window:
+        code: TCP_ZERO_WINDOW
+        unit: packets
+        integer: true
+        bands: [{threshold: 1, points: 15}, {threshold: 5, points: 30}]
+  http:
+    collectors: [http]
+    metrics:
+      http.status_code:
+        code: HTTP_ERROR_STATUS
+        unit: status
+        minimum: 100
+        maximum: 599
+        integer: true
+        bands: [{threshold: 400, points: 30}, {threshold: 500, points: 60}]
+      http.ttfb_ms:
+        code: HTTP_HIGH_TTFB
+        unit: ms
+        operator: gt
+        group: timing
+        bands: [{threshold: 800, points: 25}, {threshold: 1500, points: 40}, {threshold: 3000, points: 60}]
+      http.total_ms:
+        code: HTTP_HIGH_TOTAL
+        unit: ms
+        operator: gt
+        group: timing
+        bands: [{threshold: 2000, points: 25}, {threshold: 4000, points: 40}, {threshold: 8000, points: 60}]
+      http.connect_ms:
+        code: HTTP_HIGH_CONNECT
+        unit: ms
+        operator: gt
+        group: timing
+        bands: [{threshold: 500, points: 20}, {threshold: 1500, points: 35}]
+      http.tls_ms:
+        code: HTTP_HIGH_TLS
+        unit: ms
+        operator: gt
+        group: timing
+        bands: [{threshold: 1000, points: 20}, {threshold: 3000, points: 35}]

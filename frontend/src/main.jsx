@@ -4,6 +4,7 @@ import MetricCard from '@/components/dashboard/MetricCard';
 import TimeSeriesPanel from '@/components/dashboard/TimeSeriesPanel';
 import DiagnosisPanel from '@/components/dashboard/DiagnosisPanel';
 import MeasurementTable from '@/components/dashboard/MeasurementTable';
+import HealthScorePanel from '@/components/dashboard/HealthScorePanel';
 import { getAgents, getDiagnosis, getDiagnoses, getHistory } from '@/lib/api';
 import { formatNumber, formatTime, metricStatus, metricValue, previousChange } from '@/lib/dashboard';
 import { collectorText, findingText, ruleName, severityNames } from '@/lib/presentation';
@@ -158,9 +159,10 @@ function App() {
 
         {page === '개요' && <>
           <div className="section-title"><div><p className="eyebrow">01 / HEALTH SUMMARY</p><h2>마지막 측정의 네트워크 상태</h2></div><span>기준: 최신 측정 {latest ? `#${latest.id}` : '없음'}</span></div>
+          <HealthScorePanel key={latest?.id} measurement={latest} />
           <div className="kpi-grid">
-            <MetricCard label="종합 상태" value={currentRule ? severityNames[currentRule.severity] || currentRule.severity : '진단 대기'} status={health}
-              note={currentRule ? `발동 규칙 ${currentRule.triggered_rules.length}개 · 점수 미생성` : '규칙 결과 없음'} />
+            <MetricCard label="규칙 경보" value={currentRule ? severityNames[currentRule.severity] || currentRule.severity : '진단 대기'} status={health}
+              note={currentRule ? `발동 규칙 ${currentRule.triggered_rules.length}개` : '규칙 결과 없음'} />
             {metricSpecs.map(spec => <MetricCard key={spec.path} label={spec.label} value={metricValue(latest, spec.path)} unit={spec.unit}
               change={previousChange(history, spec.path)} status={metricStatus(currentRule, metricValue(latest, spec.path), spec.codes)} />)}
           </div>
@@ -174,6 +176,7 @@ function App() {
         {page === '측정 상세' && <>
           <div className="section-title"><div><p className="eyebrow">MEASUREMENT DETAIL</p><h2>측정 #{selectedMeasurement?.id ?? '—'}</h2></div><span>{selectedMeasurement ? formatTime(selectedMeasurement.timestamp) : '측정 없음'}</span></div>
           {!selectedMeasurement ? <div className="empty-state">측정 기록이 없습니다.</div> : <>
+            <HealthScorePanel key={selectedMeasurement.id} measurement={selectedMeasurement} />
             <section className="panel detail-intro"><div><span className="field-label">인터페이스</span><strong>{selectedMeasurement.network?.default_interface || '측정 없음'}</strong></div><div><span className="field-label">Gateway</span><strong>{selectedMeasurement.network?.gateway || '측정 없음'}</strong></div><div><span className="field-label">Internet 대상</span><strong>{selectedMeasurement.target_profile?.internet_host || '측정 없음'}</strong></div><div><span className="field-label">HTTP 대상</span><strong>{selectedMeasurement.target_profile?.http_url || '측정 없음'}</strong></div></section>
             <div className="kpi-grid detail-kpis">{metricSpecs.map(spec => <MetricCard key={spec.path} label={spec.label}
               value={metricValue(selectedMeasurement, spec.path)} unit={spec.unit} change={null}
@@ -198,6 +201,7 @@ function App() {
 
         {page === '이력' && <>
           <div className="section-title"><div><p className="eyebrow">HISTORY</p><h2>측정 이력</h2></div><span>시간순 · 최근 {visibleHistory.length}건</span></div>
+          <TimeSeriesPanel measurements={visibleHistory} title="Network Health Score 이력" description="저장된 점수 · 계산되지 않은 측정은 제외" metric="health_score.overall.score" unit=" 점" color="#65c8b7" />
           <Charts measurements={visibleHistory} />
           <MeasurementTable measurements={visibleHistory} diagnosesById={diagnosesById} selectedId={selectedId} onSelect={chooseMeasurement} />
         </>}

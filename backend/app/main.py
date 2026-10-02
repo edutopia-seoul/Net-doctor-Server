@@ -10,15 +10,20 @@ from .config import settings
 from .db import Base, engine, get_db
 from .models import AIDiagnosis, Agent, Measurement, RuleDiagnosis
 from .rule_engine import diagnose
-from .schemas import AgentOut, AgentRegister, AIDiagnosisOut, DiagnosisOut, MeasurementIn, MeasurementOut, RuleDiagnosisOut
+from .schemas import AgentOut, AgentRegister, AIDiagnosisOut, DiagnosisOut, HealthScoreOut, MeasurementIn, MeasurementOut, RuleDiagnosisOut
+from .score_store import store_score, stored_score, validate_stored_policy
+from .scoring import load_score_config
 
 
-app = FastAPI(title="NetDoctor Server", version="0.1.0")
+app = FastAPI(title="NetDoctor Server", version="0.2.0")
 
 
 @app.on_event("startup")
 def startup():
+    config = load_score_config(settings.health_score_path)
     Base.metadata.create_all(bind=engine)
+    with Session(engine) as db:
+        validate_stored_policy(db, config)
 
 
 def auth(x_netdoctor_key: str | None = Header(default=None)):
@@ -28,7 +33,8 @@ def auth(x_netdoctor_key: str | None = Header(default=None)):
 
 def measurement_out(row: Measurement) -> MeasurementOut:
     return MeasurementOut(id=row.id, agent_id=row.agent_id, timestamp=row.timestamp, target_profile=row.target_profile,
-                          network=row.network, metrics=row.metrics, collector_status=row.collector_status, created_at=row.created_at)
+                          network=row.network, metrics=row.metrics, collector_status=row.collector_status, created_at=row.created_at,
+                          health_score=stored_score(row, load_score_config(settings.health_score_path).score_version))
 
 
 def diagnosis_out(measurement: Measurement) -> DiagnosisOut:
@@ -92,13 +98,17 @@ def create_measurement(payload: MeasurementIn, db: Session = Depends(get_db)):
     db.flush()
     rule = diagnose(raw["metrics"], settings.rules_path)
     db.add(RuleDiagnosis(measurement_id=row.id, **rule))
+    score = store_score(db, row, load_score_config(settings.health_score_path))
     db.commit()
     db.refresh(row)
     history_rows = db.scalars(select(Measurement).where(Measurement.agent_id == payload.agent_id).order_by(desc(Measurement.timestamp)).limit(5)).all()
     history = [{"timestamp": h.timestamp.isoformat(), "metrics": {"gateway_ping": h.metrics.get("gateway_ping"),
                                                                     "internet_ping": h.metrics.get("internet_ping"),
                                                                     "dns": h.metrics.get("dns")}} for h in history_rows if h.id != row.id][:4]
-    result, error = analyze(raw, rule, history)
+    score_context = {"score_version": score.score_version, "overall": score.overall.model_dump(),
+                     "categories": {name: {"score": value.score, "coverage": value.coverage} for name, value in score.categories.items()},
+                     "main_deductions": [cause.model_dump() for cause in score.top_causes[:5]]}
+    result, error = analyze(raw | {"health_score": score_context}, rule, history)
     if result:
         db.add(AIDiagnosis(measurement_id=row.id, available=True, severity=result.severity, primary_cause=result.primary_cause,
                            confidence=result.confidence, measured_facts=result.measured_facts, rule_findings=result.rule_findings,
@@ -126,6 +136,17 @@ def get_measurement(measurement_id: int, db: Session = Depends(get_db)):
     if not row:
         raise HTTPException(404, "measurement not found")
     return measurement_out(row)
+
+
+@app.get("/api/v1/measurements/{measurement_id}/health-score", response_model=HealthScoreOut, dependencies=[Depends(auth)])
+def get_health_score(measurement_id: int, db: Session = Depends(get_db)):
+    row = db.get(Measurement, measurement_id)
+    if not row:
+        raise HTTPException(404, "measurement not found")
+    result = stored_score(row, load_score_config(settings.health_score_path).score_version)
+    if not result:
+        raise HTTPException(404, "health score not backfilled for the active version")
+    return result
 
 
 @app.get("/api/v1/diagnoses", response_model=list[DiagnosisOut], dependencies=[Depends(auth)])

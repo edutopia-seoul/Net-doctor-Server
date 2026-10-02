@@ -1,6 +1,6 @@
 # NetDoctor Server 개발 보고서
 
-작성·검증일: 2026-09-28 (Asia/Seoul). 아래의 측정 데이터는 서버 검증용 fixture이며 실제 Agent 실측 데이터가 아니다.
+초기 작성: 2026-09-28 · 최종 갱신/검증: 2026-10-03 (Asia/Seoul). 초기 자동화 테스트의 Fixture와19~23절의 실제 Agent 데이터를 구별한다. v2 점수 검증은 실제 Measurement ID21~40만 사용했다.
 
 ## 1. 담당 역할
 
@@ -394,7 +394,159 @@ React 한글 탭 4개: 개요(Agent 온라인/오프라인·최신 심각도·�
 
 **데이터 파이프라인은 실험 20건 모두 저장→Rule→Ollama AI→History/API 공급까지 성공**했다. 설정 장애 탐지는 14/15(93.3%), 정상 오탐은 0/5이며, Rule 결과는 원본 Metric에 20/20 일치한다. AI 실측 사실과 Rule finding도 20/20 정확하지만 자유 서술 16건은 근거 약한 원인/권고가 포함되어 발표 시 가설과 한계를 명시해야 한다. LOSS-05는 설정상 장애가 있어도 그 회차의 실제 관측값은 정상 범위인 정당한 예외다. Dashboard HTTP/API 데이터 공급은 검증했으나 대표 4건의 **실제 브라우저 시각 캡처는 아직 미실시**했다. 원본 데이터·Threshold·AI 응답은 이 분석에서 변경하지 않았다.
 
-## 23. Bklit 기반 Dashboard 개편 (2026-09-28)
+## 23. NetDoctor v2 — Network Health Score (2026-10-03)
+
+### 23.1 기능 목적
+
+실측값에서 정량 품질 점수와 감점 근거를 계산해 `점수 → 원인 → 실제 수치`를 추적한다. AI가 점수를 결정하지 않는다. 이 점수는 NetDoctor 내부의 설명 가능한 진단 보조 지표이며 공식 통신 품질/SLA 지표가 아니다.
+
+작업 시작 시 저장소는 첫 커밋 없이 staged/unstaged 코드가 혼재했다. 기존 코드·보고서·실험 CSV를 첫 커밋 **32a08f5**에 보존하고 **v1.0-mvp** 태그를 만들었다. 작업 브랜치는 **feature/health-score**다. `.env`, DB, PCAP, 모델, node_modules는 포함하지 않았다. v1 Backend/Frontend Docker 이미지에도 `:v1.0-mvp` 보존 태그를 붙였다. DB 백업 `reports/netdoctor-v1-20261003.sql`은 권한600/Git 제외이며 비밀번호·API 키를 보고서에 기록하지 않았다.
+
+### 23.2 Score Architecture
+
+```text
+Agent Measurement (v1 schema 유지)
+    → Measurement 저장
+    → 기존 Rule Engine (rules.yaml 유지)
+    → Score Engine (별도 health_score.yaml)
+    → health_scores 저장 (snapshot/hash/version/evidence)
+    → Ollama (읽기 전용 점수 근거)
+    → 기존 AI 구조 저장
+    → 기존 REST/History + Score API → Dashboard
+```
+
+주요 파일: `backend/app/scoring.py`(순수 계산·설정 검증), `health_score.yaml`(정책), `score_store.py`(버전별 불변 저장), `models.py`/`schemas.py`(DB/API), `tools/backfill_health_scores.py`(범위 검증·Backfill·CSV), `frontend/.../HealthScorePanel.jsx`(점수/근거), 기존 chart/table/API 연결 파일. 새 라이브러리는 설치하지 않고 기존 PyYAML/Pydantic/SQLAlchemy/Bklit와 표준 라이브러리를 사용했다. 구현 전 정책은 `reports/health_score_design.md`에 남겼으며 실험 점수에 맞춰 수정하지 않았다.
+
+### 23.3 Category 정의
+
+| 영역 | 실측 근거 | 해석 |
+|---|---|---|
+| Local Network | Gateway 평균 RTT/손실 | 첫 구간 방향의 관측 품질. Gateway 장비 고장 확정은 아님 |
+| Internet | Internet 평균 RTT/손실 | 해당 측정 목적지에 대한 품질. 모든 Internet 서비스의 품질은 아님 |
+| DNS | System/Google/Cloudflare 시간 | 성공한 응답의 성능. Collector availability와 분리 |
+| TCP | 재전송%, Duplicate ACK/RST/Zero Window | 짧은 캡처의 관측 품질. 표본 한계 표시 |
+| HTTP | Status/TTFB/Total/Connect/TLS | 요청 결과/시간. 서버 자체 처리 시간만 분리하지 않음 |
+
+v1 Measurement에 없는 Link/Interface up/down 상태를 추정하지 않는다. Traceroute timeout/hop 수만으로 품질 감점하지 않는다. HTTP 수집 실패로 실제 응답값이 없으면 원격 서버 장애를 단정하지 않고 미측정으로 처리한다.
+
+### 23.4 Weight
+
+Local **.20**, Internet **.25**, DNS **.15**, TCP **.20**, HTTP **.20**. 도달성/전송 관측에 합계65%, DNS15%, HTTP20%를 배정한다. 환경별 절대 품질 또는 고장 확률을 학습한 가중치는 아니다. 합계1.0/양수/유한값/정확히5개 Category를 Pydantic으로 검증한다.
+
+점수 범위는0~100. severity는 **80 이상 normal / 60 이상 warning / 60 미만 critical**, 계산 불가는 unknown. 기존 Rule severity는 변경하지 않으며 별도 “규칙 경보”로 표시한다. 종합 점수의 normal이 모든 영역의 normal을 보장하지 않는다.
+
+### 23.5 Deduction Rule
+
+| Metric | 구간과 감점 |
+|---|---|
+| Gateway RTT(ms) | >20:25, >100:40, >200:50, >500:65 |
+| Internet RTT(ms) | >150:30, >200:50, >500:65 |
+| Gateway/Internet Loss(%) | ≥3:25, ≥5:35, ≥10:45, ≥20:60, ≥50:75, ≥100:100 |
+| DNS 응답(ms) | >300:25, >600:40, >1500:60; resolver별 최대1개 |
+| TCP 재전송(%) | ≥1:10, ≥5:25, ≥10:40, ≥20:60, ≥50:80, ≥100:100 |
+| Duplicate ACK(건) | ≥3:10, ≥10:25; 재전송과 같은 그룹의 최대1개 |
+| RST / Zero Window(건) | RST≥1:10, ≥5:25; Zero Window≥1:15, ≥5:30 |
+| HTTP status | ≥400:30, ≥500:60 |
+| HTTP timing(ms) | TTFB>800:25/>1500:40/>3000:60; Total>2000:25/>4000:40/>8000:60; Connect>500:20/>1500:35; TLS>1000:20/>3000:35 |
+
+각 Metric은 해당 값이 만족하는 가장 큰 구간1개만 선택한다. HTTP 시간은 겹치는 왕복 단계이므로 timing 그룹의 **최대 감점1개**만 적용한다. 독립 그룹 합계는100에서 제한한다. 실제 적용 `points`와 제한 전 `assessed_points`를 함께 저장하고 **100−Σpoints=영역 점수**를 보장한다. Loss100%는 큰 감점부터 적용되어 같은 방향 RTT가 추가 감점되지 않는다. `top_causes.weighted_points = points × 영역 가중치 / 유효 가중치 합`으로 전체 감소분도 추적한다.
+
+감점 객체에 code, 원본 Metric 필드, 실측값/단위, 비교 operator/threshold, 적용 points, reason, group이 들어간다. 동일한 원인에서 RTT·손실·TCP·HTTP가 함께 영향을 받을 수 있지만 인과적으로 동일하다고 임의 병합하지 않는다. 그룹 내 중복 제거와 가중치/영역 상한으로 제한하며 완벽한 인과 모델이라고 주장하지 않는다.
+
+### 23.6 Missing Data 처리
+
+- null/NaN/Infinity/음수/설정 유효 범위 위반/비숫자는 제외한다. 실제0은 유지한다. TCP captured_packets=0이면 다른 필드가0이어도 TCP Score는 null이다.
+- 품질 지표가 전혀 없는 영역은 score=null/available=false. Category coverage는 설정된 품질 지표 중 유효 비율이며 collector partial/error는 별도 notes/quality로 표시한다.
+- Cloudflare 시간 null만으로 DNS를 감점하지 않는다. 실제20건 DNS Score100은 **성공한 응답에서 지연 경계 미초과**라는 뜻이다. DNS coverage는19건2/3, #33은1/3이며 System DNS 누락을 숨기지 않는다. 실제 System DNS0ms의 parser 한계도 v1 보고서와 동일하다.
+- TCP captured_packets<50 또는 확인 불가는 low_sample/partial이고 표본 수 자체로 감점하지 않는다. 표본은 실제20건에서 모두50 미만이다.
+- Overall은 unavailable 영역을 제외해 가중치를 정규화한다. 유효 영역의 원래 가중치 합이0.50 미만이면 Overall=null. Overall coverage는 누락을 포함한 원래 가중치로 계산하므로 높은 점수와 낮은 범위를 구별한다. 실제19건 Overall coverage95%, #33은90%; quality는 모두partial다.
+
+### 23.7 Database
+
+새 테이블 **health_scores**만 추가했다. measurement_id FK, score_version, overall_score/severity, result(JSONB: Category/deduction/evidence/coverage), config_snapshot(JSONB), config_hash(SHA256), created_at을 저장한다. `(measurement_id,score_version)` UNIQUE와 전체 점수 범위 CHECK가 있다. 기존4개 테이블의 실험 행은 수정하지 않았다.
+
+같은 버전은 동일 정책으로 유지하고 YAML 변경 시 score_version을 바꾼다. 기존 버전에 다른 config hash를 덮어쓰는 작업은 시작/Backfill 시 거부한다. 새 버전은 기존 결과를 보존하면서 별도 행으로 추가할 수 있다. 기존 Score는 GET 시 재계산하지 않는다.
+
+### 23.8 API
+
+- 신규 `GET /api/v1/measurements/{id}/health-score`; 동일 X-NetDoctor-Key 인증, Pydantic HealthScoreOut.
+- 기존 Measurement 응답에 optional health_score를 추가했다. Diagnosis의 measurement와 Agent History도 동일한 저장 결과를 반환한다. v1 Agent POST 입력/schema_version1.0/기존 Endpoint는 유지한다.
+- 미계산 이력은 health_score=null이고 별도 Score API는404다. 신규 측정은 Rule/Score를 AI 전에 저장하므로 Ollama 중단 시에도 조회된다.
+- 실제 대표22/26/31/36의 Frontend proxy Score API가 모두200이고 점수와 감점 원본값을 대조했다.
+
+### 23.9 Dashboard
+
+개요와 측정 상세에 전체 점수/텍스트 severity/5개 Category/coverage/partial 상태/표본 한계/감점 상세를 추가했다. 영역 또는 주요 원인 클릭으로 `100−감점=점수`, 실측값, Threshold, 원본 필드까지 확인한다. 기존 KPI·Rule 경보·측정표·AI·테마·Agent 선택·새로고침은 유지한다. Headless Firefox에서 실제20건을 연결해 대표4건과7개 History 그래프(점수+기존6개), 밝은 테마/새로고침을 확인했다. JS 오류0건. 폭500px에서4개탭 모두 문서 가로 넘침이 없었다. Chart resize 갱신을 기다린 뒤 검사했다.
+
+PPT용 실제 캡처: `reports/screenshots/health-score-22.png`, `health-score-26.png`, `health-score-31.png`, `health-score-36.png`. 키 입력은 password 마스킹 상태이고 API 키 값을 저장하지 않았다. 최근 측정/History 표의 미계산값은0이 아닌 “미계산”이다. 기존 자연스플라인의 측정점 사이 overshoot를 피하도록 Line에 단조 보간을 적용했다. 점수/원본 측정값은 바뀌지 않는다.
+
+### 23.10 AI 연동
+
+신규 측정에서 계산된 Overall/Category/주요 감점만 읽기 전용으로 AI 입력에 추가했다. System Prompt는 AI의 점수/가중치/감점 생성·수정·반환을 금지한다. 기존 StructuredAI 출력 필드와 서버 생성 measured_facts/rule_findings/primary_cause는 유지한다. 기존 ID21~40의 AI를 재저장하지 않았다. Mock 응답이 health_score=999를 반환해도 AI 출력 모델에서 제거하고 저장 Score를 대체할 수 없음을 테스트했다. 실제 Ollama 검증 호출은 기존 ID26을 참고하는 **비저장 검증 요청**으로 성공했다: available=true, warning/MEDIUM, Rule 기반 primary_cause 유지, AI 출력에 점수 필드 없음. 기존 저장 AI 행은 호출 후에도 해시가 같다.
+
+### 23.11 기존 20건 Backfill
+
+default dry-run에서 계산20/INSERT0 → `--apply` INSERT20 → 재실행 INSERT0. 범위21~40과 실제 Agent ID를 모두 검증한다. 범위 누락/다른 Agent/동일 버전 정책 충돌은 쓰기 전 거부한다. 기존 Measurement/Rule/AI 전체 행의 SHA256은 작업 전후 **5b070c64cf396fccdb7ddfd749a3fccef4930913cfef04b6cdbe9450339e70ca**로 일치했다.
+
+핵심 명령: `docker compose build backend frontend`; `docker compose up -d --no-deps backend frontend`; `docker compose exec -T backend python -m app.tools.backfill_health_scores --dry-run`/`--apply`. PostgreSQL은 재생성하지 않았고 기존 볼륨을 유지했다. Source CSV는 동일 DB에 연결하는 프로젝트 Python의 `--dry-run --csv reports/health_score_experiment.csv`로 저장된 결과를 내보냈다.
+
+### 23.12 Condition별 Score 결과
+
+각 Condition n=5, 점수 계산 유효 n=5. DNS 측정 coverage와 TCP 표본은 별도 partial이다.
+
+| Condition | Overall | Local | Internet | DNS | TCP | HTTP |
+|---|---:|---:|---:|---:|---:|---:|
+| NORMAL | 100.00 | 100.00 | 100.00 | 100.00 | 100.00 | 100.00 |
+| HIGH_LATENCY | 73.50 | 50.00 | 50.00 | 100.00 | 100.00 | 80.00 |
+| PACKET_LOSS | 80.25 | 76.00 | 61.00 | 100.00 | 82.00 | 92.00 |
+| MIXED | 75.90 | 33.00 | 70.00 | 100.00 | 94.00 | 90.00 |
+
+대표 사례(Overall / Local / Internet / DNS / TCP / HTTP): **#22:100/100/100/100/100/100**, **#26:72.5/50/50/100/100/75**, **#31:69.75/40/55/100/65/100**, **#36:71.75/15/55/100/100/100**.
+
+해석: NORMAL 5건은 불필요한 성능 감점이 없다(측정 범위의 partial은 유지). LATENCY는 Gateway/Internet 양 방향 RTT에서 각50점 감점, TTFB 경계 초과4건에 HTTP25점 감점이다. LOSS는 Internet 손실로 Internet40~100점, TCP 재전송과 일부 RST로 TCP65~100점이다. #35는 이번 Loss0%이고 재전송3.125%에 따른 TCP10점 감점만 있어 Overall98이다. MIXED는 Gateway 지연과 손실로 Local 평균33까지 낮아지지만 Overall은68~83으로0에 가깝지 않다.
+
+LOSS 평균80.25를 “장애를 모두 놓침” 또는 “모두 정상”으로 취급하지 않는다. 개별 Score는69.75/73/78.75/81.75/98이고 Rule은4warning+1normal이다. #34의 Overall81.75는 Internet55/TCP65의 이상이 다른 영역100과 평균되며 완화된 결과, #35는 Ping에서 손실이 관측되지 않은 정당한 예외다. MIXED #38/#40도 Overall≥80이지만 Local/Internet 감점과 Rule 경보를 계속 표시한다. 평균에 의한 국소 이상 희석을 한계로 공개하며 결과에 맞춰 식을 조정하지 않았다.
+
+PPT 데이터: `reports/health_score_experiment.csv`(20건, 실측ID·Condition·전체Score·주요감점·Coverage·Version/hash), `health_score_summary.csv`(Graph1 Overall 평균, Graph2 Category 평균/n), `health_score_representatives.csv`(Graph3 대표4건). 실험명은 사용자 지정 Mapping을 CSV에만 붙이며 Measurement에는 저장하지 않는다.
+
+### 23.13 테스트
+
+최종 Python 테스트는 **기존15/15 + 신규26/26 = 41/41** 통과. Frontend 기존1+신규1=**2/2**, Vite/Docker build 성공. 기존 API/Rule 테스트 파일은 수정하지 않았다. 별도 lint script는 기존 프로젝트에 없다. 기존 FastAPI on_event/anyio deprecation과 약548kB JS chunk 경고는 기능 실패가 아니다.
+
+| 목적 | 입력 | 예상 | 실제 결과 |
+|---|---|---|---|
+| v1 회귀 | 기존15개 테스트 | API/auth/Rule/AI/Fallback 유지 | 15/15 성공 |
+| 범위/감점 추적 | 정상/지연/손실/혼합/극단값 | 0~100, 100−Σpoints 일치 | 성공 |
+| 설정 검증 | 잘못된Weight/구간/Severity | 명확한 ValidationError | 성공 |
+| 결측 처리 | DNS/TCP null, NaN, 음수, 전체결측 | null/coverage/partial, 0으로 대체하지 않음 | 성공 |
+| 표본/중복 감점 | DNS partial, TCP30/0개, 여러HTTP 시간 | partial/미계산, group 최대1개 | 성공 |
+| 신규 업로드/API/AI 장애 | SQLite test DB + 기존JSON + Ollama unavailable | Score 먼저 저장,401/200/404,History/Diagnosis 연결 | 성공 |
+| 버전/영속성/Backfill | dry-run/apply/repeat/conflict/new-version | 0/20/0 insert, 충돌 거부, 구버전 보존 | 성공 |
+| 실제 DB Backfill/재시작 | 실제ID21~40, PostgreSQL restart | 점수20건 유지, 원본해시 불변 | 성공 |
+| AI 읽기 전용 | 가짜모델점수999 + 실제Ollama ID26 비저장 호출 | 모델점수 제거, 실제구조응답 성공 | 성공 |
+| Dashboard/History | 실제4개대표,7차트,테마/새로고침/500px | 실측점수·감점 정상표시, JS 오류 없음 | 성공 |
+
+신규 POST는 격리된 테스트 DB에서 검사했으며 운영DB에 Fixture를 추가하지 않았다. 실제 Agent의 다음 신규 업로드에서 v2 Score 자동 저장을 다시 확인할 수 있다. PostgreSQL 재시작 후 actual History는21→40 정렬 및 Score20건을 유지하고 원본 Measurement/Rule/AI 해시는 불변이었다.
+
+### 23.14 문제와 해결
+
+- v1에 Commit이 없었음→검증된 현 상태를 초기Commit/Tag로 명시적으로 보존하고 비밀값을 제외했다.
+- 동일 현상의 이중 감점→최대1개의group과 실제 적용 감점을 저장한다.
+- dry-run 시 새Table이 없을 가능성→존재 확인과 기존Score relationship 로딩 억제로 Table 생성/쓰기 없이 계산한다.
+- PostgreSQL JSONB의 Category key 순서 변화→UI는 Local/Internet/DNS/TCP/HTTP의 고정 표시 순서를 사용한다. 수치·정책은 바꾸지 않는다.
+- 기존REPORT23은 Bklit 개편이었음→본문을 남겨24로 이동하고, 요청대로 v2를23에 추가했다.
+- 자연스플라인이 점수 측정점 사이에서100초과처럼 보일 가능성→기존Line을 단조 보간으로 그려 범위 밖 overshoot를 방지한다. 측정값/점수/임계값은 그대로다.
+- CSV 기본 CRLF가 Git whitespace 검사에 걸림→내보내기 줄 끝을LF로 지정하고 UTF-8 BOM은 유지했다. CSV 숫자와 원본DB값은 바꾸지 않는다.
+
+### 23.15 한계
+
+기본 경계는 환경/목적지에 따라 수동 설정한 값이며 절대 품질이 아니다. 작은 표본/Cloudflare partial/실제 System DNS0ms의 유래 미검증은 v1과 같다. RST는 정상 종료에서도 나타나므로 원인을 단정하는 근거로 쓸 수 없다. 여러 Category가 같은 netem 영향을 받을 수 있다. 국소Critical이어도 Overall 평균이 높아질 수 있어 단일 점수만으로 판단하지 않는다. Link 상태/Traceroute 확정 장애/iperf 점수는 근거 부족으로 도입하지 않았다. 기능 추가 전11건은 미Backfill이므로 점수 미계산으로 표시한다.
+
+### 23.16 향후 개선
+
+환경별 경계의 타당성을 검증하고 표본 수를 늘린다. Score Version을 변경해 비교하고 이전 결과는 보존한다. RST 연결 문맥·interface/link 실측·짧은 capture 개선·DNS raw 결과를 Agent에서 얻었을 때 평가 대상을 확장한다. 국소 장애를 중시하는 critical guard/min-category 표시는 다음 버전의 명시적 정책으로 검토한다. 현재20건을 재라벨/재측정/재AI 저장해 결과를 바꾸지 않는다.
+
+## 24. Bklit 기반 Dashboard 개편 (2026-09-28)
 
 - 기존 React 19 + Vite 8 + JavaScript 단일 화면(개요·측정 상세·AI 진단·이력), `sessionStorage` API 키, `/api/v1` 상대 경로와 Nginx 3001 proxy를 확인하고 이 계약을 유지했다. Backend/Agent/DB 및 실험 원본 데이터는 수정하지 않았다.
 - 공식 Bklit registry 방식으로 Line Chart, Area Chart, Y Axis와 필요한 의존성만 설치했다. shadcn JavaScript 설정(`tsx:false`), Tailwind v4와 Vite 플러그인, Bklit chart 관련 컴포넌트를 추가했다. 생성된 chart loading label의 잘못된 상대 import와 CSS `var(----chart-*)`를 수정해야 빌드가 통과했다.

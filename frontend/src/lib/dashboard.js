@@ -1,7 +1,7 @@
 export const isNumber = value => typeof value === 'number' && Number.isFinite(value);
 
 export const metricValue = (measurement, path) =>
-  path.split('.').reduce((value, key) => value?.[key], measurement?.metrics);
+  path.split('.').reduce((value, key) => value?.[key], path.startsWith('health_score.') ? measurement : measurement?.metrics);
 
 export function chartPoints(measurements, path) {
   return measurements

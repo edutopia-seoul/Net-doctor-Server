@@ -14,3 +14,12 @@ test('missing DNS stays missing; real zero loss remains a plotted value', () => 
   assert.equal(metricStatus({ triggered_rules: ['EXTERNAL_PACKET_LOSS'] }, 10, ['EXTERNAL_PACKET_LOSS']), 'warning');
   assert.equal(metricStatus({ triggered_rules: ['INTERNET_UNREACHABLE'] }, null, ['INTERNET_UNREACHABLE']), 'critical');
 });
+
+test('score history plots only stored scores, including real zero', () => {
+  const rows = [
+    { id: 21, timestamp: '2026-09-28T10:00:00Z', health_score: { overall: { score: 100 } } },
+    { id: 22, timestamp: '2026-09-28T10:01:00Z', health_score: null },
+    { id: 23, timestamp: '2026-09-28T10:02:00Z', health_score: { overall: { score: 0 } } },
+  ];
+  assert.deepEqual(chartPoints(rows, 'health_score.overall.score').map(point => point.value), [100, 0]);
+});

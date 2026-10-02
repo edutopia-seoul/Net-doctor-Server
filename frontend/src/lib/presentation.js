@@ -64,6 +64,7 @@ const findingPrefixes = {
 };
 
 export const ruleName = code => ruleNames[code] || code;
+export const metricName = field => factNames[field] || field;
 export const factText = value => {
   const separator = value.indexOf('=');
   if (separator < 0) return value;
