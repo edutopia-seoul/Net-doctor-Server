@@ -1,0 +1,15 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.db
+database/
+node_modules/
+dist/
+*.pcap
+*.pcapng
+*.gguf
+*.sql
+model files/
+.pytest_cache/

@@ -1,0 +1,5 @@
+condition,measurement_n,avg_gateway_rtt_ms,avg_internet_rtt_ms,avg_internet_loss_pct,avg_dns_system_ms,avg_http_ttfb_ms,avg_tcp_retransmission_pct,dns_system_valid_n,rule_normal_n,rule_warning_n,rule_critical_n,ai_available_n
+NORMAL,5,3.388,2.827,0.0,25.4,262.7682,0.0,5,5,0,0,5
+HIGH_LATENCY,5,202.98,203.12,0.0,52.6,844.3528,0.0,5,0,5,0,5
+PACKET_LOSS,5,2.7256,4.0824,10.0,15.25,759.7996,4.2916,4,1,4,0,5
+MIXED,5,103.6446,103.7362,8.0,33.0,725.8238,1.2548,5,0,5,0,5

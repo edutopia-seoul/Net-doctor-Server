@@ -1,0 +1,12 @@
+gateway:
+  high_rtt_ms: 20
+  high_loss_pct: 3
+internet:
+  high_rtt_ms: 150
+  high_loss_pct: 3
+dns:
+  slow_ms: 300
+tcp:
+  retransmission_warning_pct: 5
+http:
+  high_ttfb_ms: 800
