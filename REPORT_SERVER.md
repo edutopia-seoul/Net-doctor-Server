@@ -697,7 +697,7 @@ CSV: `reports/health_score_v1_vs_v1_1.csv`, 실제20행. v1/v1.1 Score·Base/Fin
 
 ### 24.12 Regression Test
 
-기존41개와 신규23개를 합친 **Backend64/64**가 Host Python3.13과 배포 이미지 Python3.12에서 모두 통과했다. 기존 API/Rule 테스트 파일을 바꾸지 않았다. Frontend **3/3** 및 Vite/Docker build 성공. 새 운영 라이브러리는 추가하지 않았다. Selenium은 `/tmp`의 별도 검증용 venv에만 설치했다. 기존 FastAPI/anyio deprecation3건과 JS550.91kB 청크 크기 경고는 남으며 기능 오류는 아니다. 별도 lint script는 기존에 없다.
+기존41개와 신규23개를 합친 **Backend64/64**가 Host Python3.13과 배포 이미지 Python3.12에서 모두 통과했다. 기존 API/Rule 테스트 파일을 바꾸지 않았다. Frontend **3/3** 및 Vite/Docker build 성공. 새 운영 라이브러리는 추가하지 않았다. Selenium은 `/tmp`의 별도 검증용 venv에만 설치했다. 기존 FastAPI/anyio deprecation3건과 JS551.12kB 청크 크기 경고는 남으며 기능 오류는 아니다. 별도 lint script는 기존에 없다.
 
 | 검증 | 입력/방법 | 실제 결과 |
 |---|---|---|
@@ -716,7 +716,7 @@ CSV: `reports/health_score_v1_vs_v1_1.csv`, 실제20행. v1/v1.1 Score·Base/Fin
 
 실제 Ollama 응답의 Primary Cause는 “관측된 문제: 외부 구간 패킷 손실, TCP 재전송 증가”, confidence MEDIUM이었다. measured_facts 집합은 실제기존값과 일치하며 모델 출력에 점수/상태 수정 필드는 없었다. 기존 AI 행을 재저장하지 않았다. JSONB key 순서 때문에 측정 사실의 순서가 달라질 수 있어 동일 내용은 집합으로 비교했다.
 
-Frontend에는 버전 선택과 분리된 Score/Status/Quality, Cause Group, 선형 구간, TCP 표본, DNS coverage 설명을 추가했다. 실제 이력에는 점수1개+기존지표6개, 총7차트를 확인했다. 버전 전환은 #34 v1 81.75/NORMAL ↔ v1.1 82.75/WARNING으로 검증했다. 캡처는 `reports/screenshots/health-score-v1-1-{22,26,31,36,38,34}.png`이며 API 키 입력란을 숨겨 촬영했다. Agent의 오래된 last_seen을 ONLINE으로 오인 표시하지 않았다.
+Frontend에는 버전 선택과 분리된 Score/Status/Quality, Cause Group, 선형 구간, TCP 표본, DNS coverage 설명을 추가했다. v1 선택 시에는 Guard가 없는 기존 점수 기준 상태임을 별도 문구로 명시한다. 실제 이력에는 점수1개+기존지표6개, 총7차트를 확인했다. 버전 전환은 #34 v1 81.75/NORMAL ↔ v1.1 82.75/WARNING으로 검증했다. 캡처는 `reports/screenshots/health-score-v1-1-{22,26,31,36,38,34}.png`이며 API 키 입력란을 숨겨 촬영했다. Agent의 오래된 last_seen을 ONLINE으로 오인 표시하지 않았다.
 
 작업 재개 시 NetDoctor3컨테이너가 약21시간 중지돼 있었으므로 기존 컨테이너/DB볼륨을 안전하게 다시 시작한 뒤 Backend/Frontend만 빌드·교체했다. 검증 초기에는 운영 이미지에 테스트 디렉터리가 없어 pytest 경로 오류가 났고, 테스트를 임시 잘못된 위치에 복사했을 때 상대 YAML 경로 때문에 실패했다. 운영 코드를 바꾸지 않고 `/app/tests`에 검증용 테스트를 복사해64개 모두 통과했다. Selenium XPath는 React의 분리된 text node를 문자열 전체로 비교하도록 고쳐 화면 검증을 완료했다.
 

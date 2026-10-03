@@ -13,6 +13,7 @@ export default function HealthScorePanel({ measurement }) {
   const overall = health.overall;
   const status = overall.status || overall.severity;
   const base = overall.base_severity || overall.severity;
+  const guarded = health.score_version === 'health-score-v1.1';
   const groupedCauses = groupScoreCauses(health.top_causes);
   const active = selected || health.top_causes[0]?.category || 'local';
   const category = health.categories[active];
@@ -22,10 +23,10 @@ export default function HealthScorePanel({ measurement }) {
     <div className="health-overall">
       <div><span className="field-label">HEALTH SCORE · 종합 품질</span><div className={`overall-number ${base}`}><strong>{label(overall.score)}</strong>{overall.available && <span>/ 100</span>}</div></div>
       <div className="overall-description"><span className="field-label">STATUS · 장애 상태</span><span className={`state-badge ${status}`}>{severityNames[status] || '확인 불가'} · {status.toUpperCase()}</span>
-        <p>점수 기준 상태: {base.toUpperCase()} · 최종 상태는 영역 품질과 규칙 경보를 함께 반영합니다.</p>
+        <p>점수 기준 상태: {base.toUpperCase()} · {guarded ? '최종 상태는 영역 품질과 규칙 경보를 함께 반영합니다.' : 'v1 상태는 점수 기준입니다. 규칙 경보는 별도로 확인하세요.'}</p>
         {overall.guard_reason && <p className="guard-reason">상태 보호 근거: {overall.guard_reason}</p>}
         <p><span className="field-label">DATA QUALITY</span>{overall.quality.toUpperCase()} · {qualityNames[overall.quality]} · 측정 범위 {formatNumber(overall.coverage * 100, '%')}</p>
-        {overall.notes.map((note, index) => <small key={index}>{note}</small>)}<small>점수는 품질의 가중 평균, 상태는 관측 장애를 고려한 판정입니다.</small></div>
+        {overall.notes.map((note, index) => <small key={index}>{note}</small>)}<small>{guarded ? '점수는 품질의 가중 평균, 상태는 관측 장애를 고려한 판정입니다.' : 'v1은 Severity Guard를 적용하지 않은 기존 저장 결과입니다.'}</small></div>
     </div>
     <div className="category-score-grid">
       {Object.keys(names).map(name => { const item = health.categories[name]; return <button key={name} className={`category-score ${active === name ? 'active' : ''}`} aria-pressed={active === name} onClick={() => setSelected(name)}>
