@@ -146,10 +146,14 @@ class ScoreDeduction(BaseModel):
     unit: str
     threshold: float
     operator: Literal["gt", "ge"]
-    points: int = Field(ge=0, le=100)
-    assessed_points: int = Field(ge=0, le=100)
+    points: float = Field(ge=0, le=100)
+    assessed_points: float = Field(ge=0, le=100)
     reason: str
     group: str
+    cause_group: str = "UNSPECIFIED"
+    range_start: float | None = None
+    range_end: float | None = None
+    calculation: Literal["step", "linear"] = "step"
 
 
 class CategoryScore(BaseModel):
@@ -157,8 +161,9 @@ class CategoryScore(BaseModel):
     severity: Literal["normal", "warning", "critical", "unknown"]
     available: bool
     coverage: float = Field(ge=0, le=1)
-    quality: Literal["complete", "partial", "unavailable"]
+    quality: Literal["complete", "partial", "low_sample", "unavailable"]
     low_sample: bool = False
+    sample_size: int | None = Field(default=None, ge=0)
     evidence: dict[str, float] = Field(default_factory=dict)
     missing_metrics: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
@@ -168,10 +173,14 @@ class CategoryScore(BaseModel):
 class OverallScore(BaseModel):
     score: float | None = Field(default=None, ge=0, le=100)
     severity: Literal["normal", "warning", "critical", "unknown"]
+    base_severity: Literal["normal", "warning", "critical", "unknown"] | None = None
+    status: Literal["normal", "warning", "critical", "unknown"] | None = None
+    guard_triggered: list[str] = Field(default_factory=list)
+    guard_reason: str | None = None
     available: bool
     coverage: float = Field(ge=0, le=1)
     included_weight: float = Field(ge=0, le=1)
-    quality: Literal["complete", "partial", "unavailable"]
+    quality: Literal["complete", "partial", "low_confidence", "unavailable"]
     notes: list[str] = Field(default_factory=list)
 
 

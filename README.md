@@ -58,7 +58,15 @@ Frontend는 React/Vite와 Bklit Line/Area Chart, Tailwind CSS로 구성됩니다
 
 Health Score는 **실측값 → YAML 정량 기준 → 감점 → 점수**로 계산하는 NetDoctor 내부의 설명 가능한 품질 지표입니다. 의료·통신사업자의 공식 품질 기준 또는 SLA 인증이 아닙니다. AI가 점수를 생성하거나 수정하지 않습니다.
 
-`backend/app/health_score.yaml`의 모든 가중치·경계·감점은 Pydantic으로 시작 시 검증합니다. 기본 정책은 `health-score-v1`. 기존 Rule YAML과 Agent 입력 schema는 유지합니다. 품질 점수의 severity는 80~100 `normal`, 60~79.99 `warning`, 0~59.99 `critical`입니다. 단일 Rule 경보와 종합 가중 평균은 의미가 달라 화면에서 별도로 표시합니다. Overall이 normal이어도 특정 영역의 warning/critical 근거가 있으면 해당 Rule 경보를 함께 확인하세요.
+현재 기본 정책은 **`health-score-v1.1`**, 설정은 [health_score_v1_1.yaml](backend/app/health_score_v1_1.yaml)입니다. Pydantic으로 가중치·경계·감점을 시작 시 검증합니다. 기존 [health_score.yaml](backend/app/health_score.yaml)의 `health-score-v1` 정책 및 저장 결과는 그대로 보존합니다. 기존 Rule YAML과 Agent 입력 schema는 바꾸지 않습니다.
+
+### Score / Status / Data Quality
+
+- **Score**: 0~100의 전체 품질 가중 평균. 점수 기준 `base_severity`는 80 이상 normal, 60 이상 80 미만 warning, 60 미만 critical입니다.
+- **Status**: 점수 기준 상태와 Severity Guard 중 더 심각한 상태입니다. Category가 60 미만이면 최소 warning, 40 미만인 심각한 영역도 최소 warning입니다. 기존 Rule warning은 최소 warning, Rule critical은 critical을 강제합니다. Guard는 **숫자 점수를 낮추지 않습니다**. 따라서 실험 #34의 `82.75점 / WARNING`은 의도된 결과입니다.
+- **Data Quality**: `complete` / `partial` / `low_confidence` / `unavailable`. TCP 작은 표본이 있으면 Overall은 low_confidence이며, 점수나 장애 상태와는 별개입니다. 부분 측정에 작은 표본까지 있는 경우에는 low_confidence를 우선 표시하고 coverage와 결측 근거를 함께 제공합니다.
+
+API의 `overall.score`, `overall.base_severity`, `overall.status`, `overall.guard_triggered`, `overall.guard_reason`, `overall.quality`를 각각 사용합니다. 호환 필드 `overall.severity`는 v1.1에서 최종 Status와 같습니다. 기존 v1은 점수 기준 severity 그대로이며 새 상태 필드가 없는 저장 결과도 조회할 수 있습니다.
 
 | 영역 | 가중치 | 사용하는 지표 |
 |---|---:|---|
@@ -70,17 +78,29 @@ Health Score는 **실측값 → YAML 정량 기준 → 감점 → 점수**로 �
 
 도달성·전송 품질(Local/Internet/TCP)에 합계 65%, DNS에 15%, 사용자 요청 결과(HTTP)에 20%를 배정합니다. 가중치 합은 1.0이고 각 값은 양수여야 합니다. 독립적인 물리 고장 확률이나 통계 학습 가중치는 아닙니다.
 
-- 영역은 100점에서 시작합니다. 첫 주요 감점 경계는 기존 Rule과 맞춥니다(Gateway RTT>20ms, Internet RTT>150ms, Loss≥3%, DNS>300ms, TCP≥5%, TTFB>800ms). TCP 1~5% 재전송은 정상 점수 범위 내 소폭 감점입니다. 모든 구간별 감점 수치는 [health_score.yaml](backend/app/health_score.yaml)을 참고하세요.
+- 영역은 100점에서 시작합니다. v1은 기존 단계형 정책을 유지합니다. v1.1은 다음 **6개 Metric만 구간 선형 보간**하고 나머지는 단계형으로 유지합니다. `(실측값−구간 시작)/(구간 끝−구간 시작)`의 비율로 두 감점 anchor 사이를 보간하며, 마지막 anchor 이후에는 감점 상한을 유지합니다. 기존 양수 경계/감점 anchor는 그대로 사용하고, 0점 감점 시작은 첫 경계의 절반(손실은 0%)으로 정했습니다. 실제 20건의 결과에 맞춰 경계를 조정하지 않았습니다.
+
+| 선형 Metric | 감점 시작(감점 0) | 기존 경계→감점 anchor |
+|---|---:|---|
+| Gateway RTT(ms) | 10 | 20→25, 100→40, 200→50, 500→65 |
+| Internet RTT(ms) | 75 | 150→30, 200→50, 500→65 |
+| Gateway / Internet Loss(%) | 0 | 3→25, 5→35, 10→45, 20→60, 50→75, 100→100 |
+| TCP retransmission(%) | 0.5 | 1→10, 5→25, 10→40, 20→60, 50→80, 100→100 |
+| HTTP TTFB(ms) | 400 | 800→25, 1500→40, 3000→60 |
+
+- 실제 Loss 0%는 감점하지 않습니다. TTFB 799→801ms처럼 경계를 넘을 때 큰 점프가 나지 않습니다. Score의 상태 구간(80/60)과 Rule의 기존 경계까지 연속식으로 바꾼 것은 아닙니다.
 - DNS 서버별 지연, HTTP의 겹치는 시간 지표, TCP 재전송·중복 ACK는 각각 같은 그룹의 **최대 감점 1개**만 적용합니다. 나머지 독립 그룹을 합하되 0점에서 제한하고 실제 적용 감점을 저장합니다. `100−감점 합계=영역 점수`가 항상 성립합니다.
-- 각 감점은 `code`, 원본 `metric`, 실제 `value`, `unit`, `threshold`, `operator`, 적용 `points`, 상한 적용 전 `assessed_points`, `reason`, `group`을 제공합니다. `top_causes.weighted_points`는 전체 점수에 반영된 감점입니다. 감점 원인이 물리적 장애 위치의 확정은 아닙니다.
-- `null`, 비유한 수, 음수, 설정 유효 범위 위반은 제외합니다. 유효 성능 지표가 없는 영역은 `score=null`, `available=false`입니다. Capture 0개도 TCP 점수를 계산하지 않습니다. `coverage`는 영역의 설정 지표 중 유효 비율, `quality`는 complete/partial/unavailable입니다. TCP 표본 50개 미만 또는 미확인은 low_sample으로 표시하며 그 자체로 감점하지 않습니다.
+- 각 감점은 `code`, 원본 `metric`, 실제 `value`, `unit`, 적용 `points`, 상한 적용 전 `assessed_points`, `reason`, `group`을 제공합니다. 단계형은 `threshold`/`operator`, 선형은 `calculation=linear`과 `range_start`/`range_end`로 감점 구간을 추적합니다. 소수 감점은 4자리, Overall은 2자리로 저장합니다. `top_causes.weighted_points`는 전체 점수에 반영된 감점입니다.
+- `cause_group`은 LATENCY / LATENCY_EFFECT, PACKET_LOSS / TCP_DEGRADATION 등을 설명용으로 묶습니다. 여러 Category에 나타난 관련 효과는 점수에 남되 독립 장애 여러 개로 단정하지 않습니다. 인과관계를 증명하거나 Category 간 숫자 감점을 상쇄하는 기능은 아닙니다.
+- TCP RST 1건은 감점하지 않습니다. 반복 RST≥5와 재전송≥5%, Duplicate ACK≥3, Zero Window≥1 중 하나가 함께 관측된 경우에만 25점 감점합니다. RST 자체가 특정 장비 장애의 확정 근거는 아닙니다.
+- `null`, 비유한 수, 음수, 설정 유효 범위 위반은 제외합니다. 유효 성능 지표가 없는 영역은 `score=null`, `available=false`입니다. Capture 0개도 TCP 점수를 계산하지 않습니다. `coverage`는 영역의 설정 지표 중 유효 비율입니다. TCP 표본 50개 미만 또는 미확인은 v1.1에서 `quality=low_sample`, `sample_size`로 표시하며 그 자체로 감점하거나 TCP 가중치를 제거하지 않습니다.
 - Cloudflare 직접 질의 실패만으로 DNS 전체를 감점하지 않습니다. 성공한 resolver 시간으로 점수를 계산하되 결측·collector partial을 표시합니다. System DNS가 없으면 클라이언트의 DNS 품질이 검증됐다고 해석하지 않습니다. 저장된 실제 0ms는 그대로 유지합니다.
 - Overall은 유효 영역만 가중치를 정규화한 평균이며, 유효 영역의 원래 가중치 합이 0.50 이상이어야 제공됩니다. Overall coverage는 누락 영역을 포함한 원래 가중치로 계산합니다. 부분 데이터에서 높은 점수가 나와도 coverage/quality를 함께 읽어야 합니다.
 - v1에 없는 Link/Interface 상태는 추측하지 않습니다. Traceroute timeout/hop 수만으로 감점하지 않습니다. HTTP 수집 실패로 측정값이 없으면 원격 서버 장애를 단정하지 않고 계산 불가/부분 측정으로 처리합니다. HTTP 4xx/5xx가 실제 저장된 경우는 상태 코드 감점을 적용합니다. 높은 TTFB에는 네트워크와 서버 처리 요인이 섞입니다. RST는 정상 연결 종료에서도 관측될 수 있습니다.
 
-`health_scores` 테이블은 `(measurement_id, score_version)`별 불변 결과, 전체/영역 점수, 감점, YAML snapshot/hash, 생성 시각을 저장합니다. 정책 변경 시 `score_version`을 바꾸고 Backend를 재빌드하세요. 동일 버전으로 YAML을 변경해 기존 결과를 덮어쓰는 작업은 거부합니다. 기존 버전 결과는 남고 새 버전 Backfill 결과가 별도로 추가됩니다.
+`health_scores` 테이블은 `(measurement_id, score_version)`별 불변 결과, 전체/영역 점수, 감점, YAML snapshot/hash, 생성 시각을 저장합니다. 별도 DB 스키마 변경 없이 JSONB에 새 근거 필드를 저장합니다. 정책 변경 시 `score_version`을 바꾸고 Backend를 재빌드하세요. 동일 버전으로 YAML을 변경해 기존 결과를 덮어쓰는 작업은 거부합니다. v1.1의 Hash는 key 순서와 정수/실수 표기(0/0.0)를 canonical JSON으로 정규화합니다. 기존 v1 Hash는 기존 직렬화 방식으로 유지합니다.
 
-API: `GET /api/v1/measurements/{id}/health-score`는 동일한 `X-NetDoctor-Key` 인증을 사용합니다. 기존 Measurement/Diagnosis의 Measurement 객체와 History에 optional `health_score`가 추가됩니다. 미계산 Measurement의 필드는 null이고 별도 점수 API는 404입니다. GET 요청은 점수를 새로 저장하지 않습니다. 신규 업로드는 Rule과 Score를 AI 호출 전에 저장하며 Ollama 장애 시에도 둘 다 제공합니다.
+API: `GET /api/v1/measurements/{id}/health-score`는 동일한 `X-NetDoctor-Key` 인증을 사용합니다. 기본은 활성 v1.1이며 `?score_version=health-score-v1`로 기존 결과를 선택합니다. Measurement 목록/상세, Diagnosis 목록/상세, Agent History에도 동일한 optional query가 있습니다. 기존 Measurement/Diagnosis의 Measurement 객체와 History에 optional `health_score`가 제공됩니다. 미계산 Measurement의 필드는 null이고 별도 점수 API는 404입니다. GET 요청은 점수를 새로 저장하지 않습니다. 신규 업로드는 Rule과 Score를 AI 호출 전에 저장하며 Ollama 장애 시에도 둘 다 제공합니다.
 
 기존 실험 Backfill은 기본 dry-run입니다. 범위와 Agent를 확인한 후 신규 Score만 INSERT하고 기존 Measurement/Rule/AI는 수정하지 않습니다.
 
@@ -91,9 +111,20 @@ docker compose exec -T backend python -m app.tools.backfill_health_scores --dry-
 docker compose exec -T backend python -m app.tools.backfill_health_scores --apply
 ```
 
-프로젝트 루트에서 CSV까지 생성하려면 환경의 `DATABASE_URL`을 설정한 Python으로 `PYTHONPATH=backend python -m app.tools.backfill_health_scores --apply --csv reports/health_score_experiment.csv`를 실행합니다. DB URL의 비밀번호를 출력하거나 셸 이력에 직접 적지 마세요. 이미 계산한 범위의 재실행은 0건 INSERT입니다. 기본 범위는 실제 Agent ID의 21~40입니다. `reports/health_score_summary.csv`(조건 평균), `reports/health_score_representatives.csv`(22/26/31/36)도 함께 생성됩니다. 조건 이름은 사용자 제공 실험 mapping으로 CSV에만 붙이며 Measurement에 새 label을 기록하지 않습니다.
+두 버전이 이미 저장된 경우 다음 조회/내보내기는 DB를 변경하지 않습니다. Backend 컨테이너는 Compose가 구성한 PostgreSQL URL을 사용하므로 비밀번호를 별도로 출력하거나 입력할 필요가 없습니다.
 
-Dashboard 개요/측정 상세에서 영역 카드를 클릭하면 점수→감점→원본 필드/값/경계까지 확인할 수 있습니다. 기존 Rule 경보와 AI 진단은 유지하고, History와 최근 측정 표는 DB에 저장된 점수만 표시합니다. 신규 AI 요청에는 읽기 전용 점수 근거를 제공하며 기존 AI 결과는 다시 생성하지 않습니다.
+```bash
+docker compose exec -T backend python -m app.tools.backfill_health_scores \
+  --dry-run --comparison-csv /tmp/health_score_v1_vs_v1_1.csv
+docker compose cp backend:/tmp/health_score_v1_vs_v1_1.csv reports/health_score_v1_vs_v1_1.csv
+# 기존 v1 정책을 명시적으로 검증/조회
+docker compose exec -T backend python -m app.tools.backfill_health_scores \
+  --dry-run --config /app/app/health_score.yaml
+```
+
+DB URL의 비밀번호를 출력하거나 셸 이력에 직접 적지 마세요. Host Python으로 실행할 때는 기본 SQLite가 아닌 운영 PostgreSQL `DATABASE_URL`을 비공개로 제공해야 합니다. 이미 계산한 범위의 재실행은 0건 INSERT입니다. 기본 범위는 실제 Agent ID의 21~40이며, Guard Backfill은 모든 측정의 **기존 Rule 결과가 있어야** 수행합니다. v1 CSV인 `health_score_experiment.csv`, `health_score_summary.csv`, `health_score_representatives.csv`는 보존합니다. v1.1 별도 통계 CSV가 필요하면 `--csv /tmp/health_score_v1_1_experiment.csv`를 지정한 뒤 복사합니다. 새 버전의 companion CSV는 지정 이름에 `_summary`/`_representatives`를 붙여 v1 파일을 덮어쓰지 않습니다. 조건 이름은 사용자 제공 실험 mapping으로 CSV에만 붙이며 Measurement에 새 label을 기록하지 않습니다.
+
+Dashboard의 “점수 정책”에서 v1.1/v1을 전환합니다. 개요/측정 상세의 Score·Status·Data Quality를 분리하고, 영역 카드를 클릭하면 점수→감점→원본 필드/값/보간 구간까지 확인할 수 있습니다. DNS 100점은 **측정된 Resolver에서 지연 감점이 없었다**는 뜻이며 모든 Resolver가 정상이라는 의미가 아닙니다. 기존 Rule 경보와 AI 진단은 유지하고, History와 최근 측정 표는 선택한 버전의 DB 저장 점수만 표시합니다. 신규 AI 요청에는 읽기 전용 점수·상태·품질·Guard 근거를 제공하며 기존 AI 결과는 다시 생성하지 않습니다.
 
 Agent는 `http://192.168.0.201:8000`을 Server URL로 사용하고, 모든 `/api/v1/*` 요청에 `X-NetDoctor-Key: <AGENT_API_KEY>`를 보냅니다. 먼저 `POST /api/v1/agents/register`, 이후 `POST /api/v1/measurements` 순서입니다. 실제 Ubuntu Agent(`192.168.0.202`)의 측정 11건으로 DB·규칙·AI·이력을 검증했습니다. 현재 AI 요청은 동기식이며 Host Ollama 추론이 느리므로 여러 측정을 한꺼번에 보내지 말고 각 요청 완료를 기다리세요. 실험 전 Agent와 Server의 시계를 동기화하세요.
 

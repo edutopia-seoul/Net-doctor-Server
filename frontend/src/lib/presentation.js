@@ -65,6 +65,16 @@ const findingPrefixes = {
 
 export const ruleName = code => ruleNames[code] || code;
 export const metricName = field => factNames[field] || field;
+export const causeGroupName = group => ({ LATENCY: '지연 관련 관측', LATENCY_EFFECT: '지연 관련 관측',
+  PACKET_LOSS: '손실·전송 품질 관측', TCP_DEGRADATION: '손실·전송 품질 관측',
+  TCP_SIGNAL: 'TCP 연결 신호', DNS: 'DNS 성능', HTTP_ERROR: 'HTTP 응답 오류' }[group] || '개별 측정 근거');
+export function groupScoreCauses(causes = []) {
+  return Object.entries(causes.reduce((groups, cause) => {
+    const name = causeGroupName(cause.cause_group);
+    (groups[name] ||= []).push(cause);
+    return groups;
+  }, {})).map(([name, effects]) => ({ name, effects, points: effects.reduce((sum, effect) => sum + effect.weighted_points, 0) }));
+}
 export const factText = value => {
   const separator = value.indexOf('=');
   if (separator < 0) return value;

@@ -17,14 +17,23 @@ def stored_score(measurement: Measurement, version: str) -> HealthScoreOut | Non
     return HealthScoreOut.model_validate(row.result | {"created_at": row.created_at}) if row else None
 
 
-def store_score(db: Session, measurement: Measurement, config: ScoreConfig) -> HealthScoreOut:
+def stored_rule(measurement: Measurement) -> dict | None:
+    rule = measurement.rule_diagnosis
+    return {"severity": rule.severity, "triggered_rules": rule.triggered_rules} if rule else None
+
+
+def store_score(db: Session, measurement: Measurement, config: ScoreConfig, rule_diagnosis: dict | None = None) -> HealthScoreOut:
     existing = stored_score(measurement, config.score_version)
     if existing:
         if existing.config_hash != config_hash(config):
             raise ValueError("existing score uses a different config; change score_version")
         return existing
     payload = {"metrics": measurement.metrics, "collector_status": measurement.collector_status}
-    result = calculate_score(payload, config, measurement.id)
+    if config.severity_guard and rule_diagnosis is None:
+        rule_diagnosis = stored_rule(measurement)
+        if rule_diagnosis is None:
+            raise ValueError("stored Rule Diagnosis required for severity guard")
+    result = calculate_score(payload, config, measurement.id, rule_diagnosis=rule_diagnosis)
     row = HealthScore(measurement=measurement, score_version=config.score_version, config_hash=result.config_hash,
                       config_snapshot=config.model_dump(), overall_score=result.overall.score,
                       overall_severity=result.overall.severity, result=result.model_dump(mode="json"))

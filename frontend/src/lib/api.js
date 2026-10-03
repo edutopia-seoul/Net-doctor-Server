@@ -11,7 +11,8 @@ async function request(path, key) {
 }
 
 export const getAgents = key => request('/agents', key);
-export const getDiagnoses = key => request('/diagnoses?limit=200', key);
-export const getHistory = (key, agentId) =>
-  request(`/agents/${encodeURIComponent(agentId)}/history?limit=100`, key);
-export const getDiagnosis = (key, id) => request(`/diagnoses/${id}`, key);
+const policyQuery = version => `score_version=${encodeURIComponent(version)}`;
+export const getDiagnoses = (key, version = 'health-score-v1.1') => request(`/diagnoses?limit=200&${policyQuery(version)}`, key);
+export const getHistory = (key, agentId, version = 'health-score-v1.1') =>
+  request(`/agents/${encodeURIComponent(agentId)}/history?limit=100&${policyQuery(version)}`, key);
+export const getDiagnosis = (key, id, version = 'health-score-v1.1') => request(`/diagnoses/${id}?${policyQuery(version)}`, key);

@@ -167,6 +167,11 @@ tbody tr:hover, tbody tr.selected { background: var(--surface-soft); }
 .overall-number.warning { color: var(--warning); }
 .overall-number.critical { color: var(--critical); }
 .overall-description p { font-size: .78rem; margin: 7px 0 4px; }
+.overall-description .field-label { display: block; margin-bottom: 4px; }
+.guard-reason { color: var(--warning); }
+.cause-group { padding-top: 8px; }
+.cause-group h5 { display: flex; justify-content: space-between; gap: 10px; margin: 0; color: var(--muted); font-size: .73rem; }
+.cause-group h5 span { white-space: nowrap; }
 .overall-description small { display: block; color: var(--muted); font-size: .71rem; }
 .category-score-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
 .category-score { display: grid; gap: 7px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); color: var(--text); text-align: left; }

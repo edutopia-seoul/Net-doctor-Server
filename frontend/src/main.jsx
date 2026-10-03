@@ -44,6 +44,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [limit, setLimit] = useState(20);
+  const [scoreVersion, setScoreVersion] = useState('health-score-v1.1');
   const [state, setState] = useState('idle');
   const [error, setError] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('netdoctor-theme') || 'dark');
@@ -53,18 +54,19 @@ function App() {
     localStorage.setItem('netdoctor-theme', theme);
   }, [theme]);
 
-  async function load(nextKey = key, requestedAgent = agentId) {
+  async function load(nextKey = key, requestedAgent = agentId, requestedVersion = scoreVersion) {
     if (!nextKey) return;
     setState('loading');
     setError('');
     try {
-      const [agentRows, diagnosisRows] = await Promise.all([getAgents(nextKey), getDiagnoses(nextKey)]);
+      const [agentRows, diagnosisRows] = await Promise.all([getAgents(nextKey), getDiagnoses(nextKey, requestedVersion)]);
       const activeId = agentRows.some(agent => agent.agent_id === requestedAgent)
         ? requestedAgent : agentRows[0]?.agent_id || '';
-      const measurementRows = activeId ? await getHistory(nextKey, activeId) : [];
+      const measurementRows = activeId ? await getHistory(nextKey, activeId, requestedVersion) : [];
       setAgents(agentRows);
       setDiagnoses(diagnosisRows);
       setAgentId(activeId);
+      setScoreVersion(requestedVersion);
       setHistory(measurementRows);
       setSelectedId(current => measurementRows.some(row => row.id === current) ? current : measurementRows.at(-1)?.id ?? null);
       sessionStorage.setItem('netdoctor-key', nextKey);
@@ -82,7 +84,7 @@ function App() {
     setPage('측정 상세');
     if (diagnoses.some(item => item.measurement.id === id)) return;
     try {
-      const detail = await getDiagnosis(key, id);
+      const detail = await getDiagnosis(key, id, scoreVersion);
       setDiagnoses(current => [detail, ...current.filter(item => item.measurement.id !== id)]);
     } catch (cause) {
       if (cause.status !== 404) setError(cause.message);
@@ -143,6 +145,12 @@ function App() {
             {[20, 50, 100].map(value => <option value={value} key={value}>최근 {value}건</option>)}
           </select>
         </label>
+        <label className="select-control">점수 정책
+          <select value={scoreVersion} onChange={event => load(key, agentId, event.target.value)} disabled={!key || state === 'loading'}>
+            <option value="health-score-v1.1">v1.1 · 상태 보호</option>
+            <option value="health-score-v1">v1 · 기존 저장 결과</option>
+          </select>
+        </label>
       </div>
 
       {error && <div className="error-banner" role="alert">{error} {history.length > 0 && '현재 보이는 값은 마지막으로 불러온 데이터입니다.'}<button onClick={() => load()}>다시 시도</button></div>}
@@ -159,7 +167,7 @@ function App() {
 
         {page === '개요' && <>
           <div className="section-title"><div><p className="eyebrow">01 / HEALTH SUMMARY</p><h2>마지막 측정의 네트워크 상태</h2></div><span>기준: 최신 측정 {latest ? `#${latest.id}` : '없음'}</span></div>
-          <HealthScorePanel key={latest?.id} measurement={latest} />
+          <HealthScorePanel key={`${latest?.id}-${scoreVersion}`} measurement={latest} />
           <div className="kpi-grid">
             <MetricCard label="규칙 경보" value={currentRule ? severityNames[currentRule.severity] || currentRule.severity : '진단 대기'} status={health}
               note={currentRule ? `발동 규칙 ${currentRule.triggered_rules.length}개` : '규칙 결과 없음'} />
@@ -176,7 +184,7 @@ function App() {
         {page === '측정 상세' && <>
           <div className="section-title"><div><p className="eyebrow">MEASUREMENT DETAIL</p><h2>측정 #{selectedMeasurement?.id ?? '—'}</h2></div><span>{selectedMeasurement ? formatTime(selectedMeasurement.timestamp) : '측정 없음'}</span></div>
           {!selectedMeasurement ? <div className="empty-state">측정 기록이 없습니다.</div> : <>
-            <HealthScorePanel key={selectedMeasurement.id} measurement={selectedMeasurement} />
+            <HealthScorePanel key={`${selectedMeasurement.id}-${scoreVersion}`} measurement={selectedMeasurement} />
             <section className="panel detail-intro"><div><span className="field-label">인터페이스</span><strong>{selectedMeasurement.network?.default_interface || '측정 없음'}</strong></div><div><span className="field-label">Gateway</span><strong>{selectedMeasurement.network?.gateway || '측정 없음'}</strong></div><div><span className="field-label">Internet 대상</span><strong>{selectedMeasurement.target_profile?.internet_host || '측정 없음'}</strong></div><div><span className="field-label">HTTP 대상</span><strong>{selectedMeasurement.target_profile?.http_url || '측정 없음'}</strong></div></section>
             <div className="kpi-grid detail-kpis">{metricSpecs.map(spec => <MetricCard key={spec.path} label={spec.label}
               value={metricValue(selectedMeasurement, spec.path)} unit={spec.unit} change={null}
@@ -201,7 +209,7 @@ function App() {
 
         {page === '이력' && <>
           <div className="section-title"><div><p className="eyebrow">HISTORY</p><h2>측정 이력</h2></div><span>시간순 · 최근 {visibleHistory.length}건</span></div>
-          <TimeSeriesPanel measurements={visibleHistory} title="Network Health Score 이력" description="저장된 점수 · 계산되지 않은 측정은 제외" metric="health_score.overall.score" unit=" 점" color="#65c8b7" />
+          <TimeSeriesPanel measurements={visibleHistory} title="Network Health Score 이력" description={`${scoreVersion} · 저장된 점수 · 미계산 측정 제외`} metric="health_score.overall.score" unit=" 점" color="#65c8b7" />
           <Charts measurements={visibleHistory} />
           <MeasurementTable measurements={visibleHistory} diagnosesById={diagnosesById} selectedId={selectedId} onSelect={chooseMeasurement} />
         </>}

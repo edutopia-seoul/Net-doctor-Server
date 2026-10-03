@@ -15,7 +15,7 @@ from .score_store import store_score, stored_score, validate_stored_policy
 from .scoring import load_score_config
 
 
-app = FastAPI(title="NetDoctor Server", version="0.2.0")
+app = FastAPI(title="NetDoctor Server", version="0.2.1")
 
 
 @app.on_event("startup")
@@ -31,16 +31,16 @@ def auth(x_netdoctor_key: str | None = Header(default=None)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid API key")
 
 
-def measurement_out(row: Measurement) -> MeasurementOut:
+def measurement_out(row: Measurement, score_version: str | None = None) -> MeasurementOut:
     return MeasurementOut(id=row.id, agent_id=row.agent_id, timestamp=row.timestamp, target_profile=row.target_profile,
                           network=row.network, metrics=row.metrics, collector_status=row.collector_status, created_at=row.created_at,
-                          health_score=stored_score(row, load_score_config(settings.health_score_path).score_version))
+                          health_score=stored_score(row, score_version or load_score_config(settings.health_score_path).score_version))
 
 
-def diagnosis_out(measurement: Measurement) -> DiagnosisOut:
+def diagnosis_out(measurement: Measurement, score_version: str | None = None) -> DiagnosisOut:
     rule, ai = measurement.rule_diagnosis, measurement.ai_diagnosis
     return DiagnosisOut(
-        measurement=measurement_out(measurement),
+        measurement=measurement_out(measurement, score_version),
         rule_diagnosis=RuleDiagnosisOut(severity=rule.severity, findings=rule.findings, triggered_rules=rule.triggered_rules),
         ai_diagnosis=AIDiagnosisOut(available=ai.available, severity=ai.severity, primary_cause=ai.primary_cause,
                                     confidence=ai.confidence, measured_facts=ai.measured_facts, rule_findings=ai.rule_findings,
@@ -98,7 +98,7 @@ def create_measurement(payload: MeasurementIn, db: Session = Depends(get_db)):
     db.flush()
     rule = diagnose(raw["metrics"], settings.rules_path)
     db.add(RuleDiagnosis(measurement_id=row.id, **rule))
-    score = store_score(db, row, load_score_config(settings.health_score_path))
+    score = store_score(db, row, load_score_config(settings.health_score_path), rule_diagnosis=rule)
     db.commit()
     db.refresh(row)
     history_rows = db.scalars(select(Measurement).where(Measurement.agent_id == payload.agent_id).order_by(desc(Measurement.timestamp)).limit(5)).all()
@@ -106,7 +106,8 @@ def create_measurement(payload: MeasurementIn, db: Session = Depends(get_db)):
                                                                     "internet_ping": h.metrics.get("internet_ping"),
                                                                     "dns": h.metrics.get("dns")}} for h in history_rows if h.id != row.id][:4]
     score_context = {"score_version": score.score_version, "overall": score.overall.model_dump(),
-                     "categories": {name: {"score": value.score, "coverage": value.coverage} for name, value in score.categories.items()},
+                     "categories": {name: {"score": value.score, "coverage": value.coverage,
+                                           "quality": value.quality, "sample_size": value.sample_size} for name, value in score.categories.items()},
                      "main_deductions": [cause.model_dump() for cause in score.top_causes[:5]]}
     result, error = analyze(raw | {"health_score": score_context}, rule, history)
     if result:
@@ -123,47 +124,49 @@ def create_measurement(payload: MeasurementIn, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/measurements", response_model=list[MeasurementOut], dependencies=[Depends(auth)])
-def list_measurements(agent_id: str | None = None, limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db)):
+def list_measurements(agent_id: str | None = None, limit: int = Query(50, ge=1, le=200),
+                      score_version: str | None = Query(None, max_length=64), db: Session = Depends(get_db)):
     query = select(Measurement).order_by(desc(Measurement.timestamp)).limit(limit)
     if agent_id:
         query = query.where(Measurement.agent_id == agent_id)
-    return [measurement_out(r) for r in db.scalars(query).all()]
+    return [measurement_out(r, score_version) for r in db.scalars(query).all()]
 
 
 @app.get("/api/v1/measurements/{measurement_id}", response_model=MeasurementOut, dependencies=[Depends(auth)])
-def get_measurement(measurement_id: int, db: Session = Depends(get_db)):
+def get_measurement(measurement_id: int, score_version: str | None = Query(None, max_length=64), db: Session = Depends(get_db)):
     row = db.get(Measurement, measurement_id)
     if not row:
         raise HTTPException(404, "measurement not found")
-    return measurement_out(row)
+    return measurement_out(row, score_version)
 
 
 @app.get("/api/v1/measurements/{measurement_id}/health-score", response_model=HealthScoreOut, dependencies=[Depends(auth)])
-def get_health_score(measurement_id: int, db: Session = Depends(get_db)):
+def get_health_score(measurement_id: int, score_version: str | None = Query(None, max_length=64), db: Session = Depends(get_db)):
     row = db.get(Measurement, measurement_id)
     if not row:
         raise HTTPException(404, "measurement not found")
-    result = stored_score(row, load_score_config(settings.health_score_path).score_version)
+    result = stored_score(row, score_version or load_score_config(settings.health_score_path).score_version)
     if not result:
-        raise HTTPException(404, "health score not backfilled for the active version")
+        raise HTTPException(404, "health score not stored for the requested version")
     return result
 
 
 @app.get("/api/v1/diagnoses", response_model=list[DiagnosisOut], dependencies=[Depends(auth)])
-def list_diagnoses(limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db)):
+def list_diagnoses(limit: int = Query(50, ge=1, le=200), score_version: str | None = Query(None, max_length=64), db: Session = Depends(get_db)):
     rows = db.scalars(select(Measurement).order_by(desc(Measurement.timestamp)).limit(limit)).all()
-    return [diagnosis_out(row) for row in rows if row.rule_diagnosis and row.ai_diagnosis]
+    return [diagnosis_out(row, score_version) for row in rows if row.rule_diagnosis and row.ai_diagnosis]
 
 
 @app.get("/api/v1/diagnoses/{measurement_id}", response_model=DiagnosisOut, dependencies=[Depends(auth)])
-def get_diagnosis(measurement_id: int, db: Session = Depends(get_db)):
+def get_diagnosis(measurement_id: int, score_version: str | None = Query(None, max_length=64), db: Session = Depends(get_db)):
     row = db.get(Measurement, measurement_id)
     if not row or not row.rule_diagnosis or not row.ai_diagnosis:
         raise HTTPException(404, "diagnosis not found")
-    return diagnosis_out(row)
+    return diagnosis_out(row, score_version)
 
 
 @app.get("/api/v1/agents/{agent_id}/history", response_model=list[MeasurementOut], dependencies=[Depends(auth)])
-def agent_history(agent_id: str, limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
+def agent_history(agent_id: str, limit: int = Query(100, ge=1, le=500),
+                  score_version: str | None = Query(None, max_length=64), db: Session = Depends(get_db)):
     rows = db.scalars(select(Measurement).where(Measurement.agent_id == agent_id).order_by(desc(Measurement.timestamp)).limit(limit)).all()
-    return [measurement_out(r) for r in reversed(rows)]
+    return [measurement_out(r, score_version) for r in reversed(rows)]

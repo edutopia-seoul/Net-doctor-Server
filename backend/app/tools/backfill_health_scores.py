@@ -10,7 +10,7 @@ from sqlalchemy.orm import noload
 from ..config import settings
 from ..db import SessionLocal, engine
 from ..models import HealthScore, Measurement
-from ..score_store import store_score, stored_score, validate_stored_policy
+from ..score_store import store_score, stored_score, stored_rule, validate_stored_policy
 from ..scoring import calculate_score, load_score_config
 
 
@@ -34,6 +34,8 @@ def backfill(db, config, start_id, end_id, agent_id, apply=False):
         raise ValueError("agent mismatch; no score will be inserted")
     if has_scores:
         validate_stored_policy(db, config)
+    if config.severity_guard and any(stored_rule(row) is None for row in rows):
+        raise ValueError("stored Rule Diagnosis required for every measurement before guard backfill")
     results, inserted = [], 0
     for row in rows:
         existing = stored_score(row, config.score_version) if has_scores else None
@@ -43,7 +45,8 @@ def backfill(db, config, start_id, end_id, agent_id, apply=False):
             result = store_score(db, row, config)
             inserted += 1
         else:
-            result = calculate_score({"metrics": row.metrics, "collector_status": row.collector_status}, config, row.id)
+            result = calculate_score({"metrics": row.metrics, "collector_status": row.collector_status}, config, row.id,
+                                     rule_diagnosis=stored_rule(row) if config.severity_guard else None)
         results.append(result)
     return results, inserted
 
@@ -68,7 +71,8 @@ def write_experiment_csv(results, path):
             writer.writerows({key: "null" if row.get(key) is None else row[key] for key in columns} for row in data)
 
     write(path, fields, rows)
-    write(path.with_name("health_score_representatives.csv"), fields, [row for row in rows if row["measurement_id"] in (22, 26, 31, 36)])
+    prefix = "health_score" if all(r.score_version == "health-score-v1" for r in results) else path.stem
+    write(path.with_name(prefix + "_representatives.csv"), fields, [row for row in rows if row["measurement_id"] in (22, 26, 31, 36)])
     summaries = []
     for condition in CONDITIONS:
         subset = [row for row in rows if row["condition"] == condition]
@@ -80,8 +84,40 @@ def write_experiment_csv(results, path):
             summary[field] = round(mean(values), 2) if values else None
             summary[field + "_n"] = len(values)
         summaries.append(summary)
-    write(path.with_name("health_score_summary.csv"), list(summaries[0]) if summaries else ["condition"], summaries)
+    write(path.with_name(prefix + "_summary.csv"), list(summaries[0]) if summaries else ["condition"], summaries)
     return summaries
+
+
+def write_comparison_csv(db, results, path):
+    """Export saved v1/v1.1 results only; never overwrite the v1 experiment exports."""
+    rows = []
+    for result in results:
+        measurement = db.get(Measurement, result.measurement_id)
+        old = stored_score(measurement, "health-score-v1")
+        new = stored_score(measurement, "health-score-v1.1")
+        if not old or not new:
+            raise ValueError("comparison requires both saved v1 and v1.1 results")
+        rows.append({"measurement_id": result.measurement_id,
+                     "condition": CONDITIONS[(result.measurement_id - 21) // 5] if 21 <= result.measurement_id <= 40 else "UNLABELED",
+                     "v1_overall": old.overall.score, "v1_status": old.overall.severity,
+                     "v1_1_overall": new.overall.score, "v1_1_base_status": new.overall.base_severity,
+                     "v1_1_final_status": new.overall.status,
+                     **{name: new.categories[name].score for name in ("local", "internet", "dns", "tcp", "http")},
+                     "quality": new.overall.quality, "coverage": new.overall.coverage,
+                     "tcp_sample_size": new.categories["tcp"].sample_size,
+                     "guard_trigger": ";".join(new.overall.guard_triggered), "guard_reason": new.overall.guard_reason,
+                     "v1_config_hash": old.config_hash, "v1_1_config_hash": new.config_hash})
+    if not rows:
+        raise ValueError("no results to compare")
+    path = Path(path)
+    if path.name in {"health_score_experiment.csv", "health_score_summary.csv", "health_score_representatives.csv"}:
+        raise ValueError("choose a separate comparison CSV; v1 exports are preserved")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]), lineterminator="\n")
+        writer.writeheader()
+        writer.writerows({key: "null" if value is None else value for key, value in row.items()} for row in rows)
+    return rows
 
 
 def main():
@@ -93,12 +129,16 @@ def main():
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--dry-run", action="store_true")
     parser.add_argument("--csv", type=Path)
+    parser.add_argument("--comparison-csv", type=Path)
+    parser.add_argument("--config", help="Explicit policy YAML (default: active server policy)")
     args = parser.parse_args()
-    config = load_score_config(settings.health_score_path)
+    config = load_score_config(args.config or settings.health_score_path)
     with SessionLocal() as db:
         results, inserted = backfill(db, config, args.start_id, args.end_id, args.agent_id, apply=args.apply)
         if args.apply:
             db.commit()
+        if args.comparison_csv:
+            write_comparison_csv(db, results, args.comparison_csv)
     print(f"mode={'apply' if args.apply else 'dry-run'} rows={len(results)} inserted={inserted} version={config.score_version}")
     for result in results:
         print(f"ID {result.measurement_id}: overall={result.overall.score} " + " ".join(f"{name}={value.score}" for name, value in result.categories.items()))
